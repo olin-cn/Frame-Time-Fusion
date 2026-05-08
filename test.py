@@ -16,7 +16,10 @@ READABLE_WINDOW_S = 40.0
 PRED_STEPS = 3
 SMOOTH_WIN = 5
 USE_SMOOTH_FOR_PRED = False
-PRED_FIT_WIN = 6
+KF_FIT_WIN = 6
+KF_DT = 1.0
+KF_PROCESS_VAR = 0.05
+KF_MEAS_VAR = 0.8
 H_REF_FOR_ACC = 50
 
 # Triple-exponential relaxation parameters
@@ -239,28 +242,110 @@ def smooth_trajectory(y, win=SMOOTH_WIN):
     kernel = np.ones(win) / win
     return np.convolve(y_pad, kernel, mode='valid')
 
-def predict_from_last_point_quadratic(x_hist, y_hist, steps, H_limit, fit_win=PRED_FIT_WIN):
+def predict_from_last_point_kalman(
+    x_hist,
+    y_hist,
+    steps,
+    H_limit,
+    fit_win=KF_FIT_WIN,
+    dt=KF_DT,
+    process_var=KF_PROCESS_VAR,
+    meas_var=KF_MEAS_VAR
+):
+    """
+    Three-state Kalman filter prediction based on a constant-acceleration model.
+
+    State vector:
+        s = [y, v_y, a_y]^T
+
+    State transition:
+        y_k     = y_{k-1} + v_{k-1} dt + 0.5 a_{k-1} dt^2
+        v_k     = v_{k-1} + a_{k-1} dt
+        a_k     = a_{k-1}
+
+    Observation:
+        z_k = y_k + noise
+
+    This replaces the previous quadratic extrapolation so that the simulation
+    prediction is consistent with the Kalman-filter description in the manuscript.
+    """
     x_hist = np.asarray(x_hist[-fit_win:], dtype=float)
     y_hist = np.asarray(y_hist[-fit_win:], dtype=float)
 
-    if len(x_hist) < 5 or steps <= 0:
+    if len(x_hist) < 3 or steps <= 0:
         return None, None
 
-    x_last = x_hist[-1]
-    y_last = y_hist[-1]
-    h = x_hist - x_last
-    dy = y_hist - y_last
+    # Sort by x in case the input is not strictly ordered.
+    order = np.argsort(x_hist)
+    x_hist = x_hist[order]
+    y_hist = y_hist[order]
 
-    X = np.column_stack([h, h**2])
-    weights = np.linspace(0.4, 1.0, len(h))
-    coef = np.linalg.lstsq(weights[:, None] * X, weights * dy, rcond=None)[0]
-    b, c = coef
+    # Initial velocity and acceleration estimated from the first few points.
+    v0 = (y_hist[1] - y_hist[0]) / dt
+    if len(y_hist) >= 3:
+        a0 = (y_hist[2] - 2.0 * y_hist[1] + y_hist[0]) / (dt ** 2)
+    else:
+        a0 = 0.0
 
-    h_pred = np.arange(1, steps + 1, dtype=float)
-    y_pred = y_last + b * h_pred + c * (h_pred ** 2)
-    y_pred = np.clip(y_pred, 0, H_limit - 1)
+    state = np.array([y_hist[0], v0, a0], dtype=float)
+    P = np.diag([1.0, 1.0, 1.0])
 
-    x_pred = np.arange(int(x_last) + 1, int(x_last) + 1 + steps)
+    F = np.array([
+        [1.0, dt, 0.5 * dt * dt],
+        [0.0, 1.0, dt],
+        [0.0, 0.0, 1.0]
+    ], dtype=float)
+
+    Hm = np.array([[1.0, 0.0, 0.0]], dtype=float)
+
+    # Simple constant-acceleration process noise.
+    Q = process_var * np.array([
+        [dt ** 4 / 4.0, dt ** 3 / 2.0, dt ** 2 / 2.0],
+        [dt ** 3 / 2.0, dt ** 2,       dt],
+        [dt ** 2 / 2.0, dt,            1.0]
+    ], dtype=float)
+
+    R = np.array([[meas_var]], dtype=float)
+
+    # Kalman filtering over the observed reconstructed trajectory.
+    # Start from the first point and update sequentially with subsequent points.
+    for z in y_hist[1:]:
+        # Prediction step
+        state = F @ state
+        P = F @ P @ F.T + Q
+
+        # Measurement update
+        residual = np.array([[z - (Hm @ state)[0]]], dtype=float)
+        S = Hm @ P @ Hm.T + R
+        K = P @ Hm.T @ np.linalg.inv(S)
+
+        state = state + (K @ residual).flatten()
+        P = (np.eye(3) - K @ Hm) @ P
+
+        # Stabilize the estimate for noisy reconstructed paths.
+        state[1] = np.clip(state[1], -5.0, 5.0)
+        state[2] = np.clip(state[2], -3.0, 3.0)
+
+    # Anchor the predicted trajectory at the last observed point.
+    # This keeps the one-step-ahead prediction visually and numerically consistent
+    # with the reconstructed endpoint.
+    state[0] = y_hist[-1]
+
+    y_pred = []
+    for _ in range(steps):
+        state = F @ state
+        P = F @ P @ F.T + Q
+
+        state[1] = np.clip(state[1], -5.0, 5.0)
+        state[2] = np.clip(state[2], -3.0, 3.0)
+
+        y_pred.append(state[0])
+
+    y_pred = np.clip(np.asarray(y_pred, dtype=float), 0, H_limit - 1)
+
+    x_last = int(round(x_hist[-1]))
+    x_pred = np.arange(x_last + 1, x_last + 1 + steps, dtype=int)
+
     return x_pred, y_pred
 
 # =========================================================
@@ -344,7 +429,7 @@ def plot_main_figure(
     ax.plot(x_rec, y_smooth, color='green', lw=2.2, label='Reconstructed(smoothed)')
 
     if x_pred is not None and y_pred is not None:
-        ax.plot(x_pred, y_pred, '--o', color='blue', lw=2.0, ms=6, label='Predicted(3-step)')
+        ax.plot(x_pred, y_pred, '--o', color='blue', lw=2.0, ms=6, label='Predicted(KF, 3-step)')
 
     ax.set_xlim(0, V_full.shape[1] - 1)
     ax.set_ylim(V_full.shape[0] - 1, 0)
@@ -388,7 +473,7 @@ def plot_smoothed_curve_only(x_rec, y_smooth, H, W, out_png='fig_reconstructed_s
 # Main
 # =========================================================
 def main():
-    print("RUNNING NEW VERSION - SPEED FIXED")
+    print("RUNNING KALMAN FILTER VERSION - SPEED FIXED")
 
     voltage_matrix, gt_df, meta = generate_sine_trajectory_100x50(noise_ratio=0.05, seed=42)
     H, W = voltage_matrix.shape
@@ -410,10 +495,10 @@ def main():
 
   
     path_for_pred = y_smooth if USE_SMOOTH_FOR_PRED else y_raw
-    fit_n = min(PRED_FIT_WIN, len(x_rec))
+    fit_n = min(KF_FIT_WIN, len(x_rec))
     x_hist = x_rec[-fit_n:]
     y_hist = path_for_pred[-fit_n:]
-    x_pred, y_pred = predict_from_last_point_quadratic(x_hist, y_hist, PRED_STEPS, H_limit=H)
+    x_pred, y_pred = predict_from_last_point_kalman(x_hist, y_hist, PRED_STEPS, H_limit=H)
 
     pred_metrics = {'mae': np.nan, 'rmse': np.nan, 'acc_rmse_pct': np.nan}
     pred_direction = np.nan
