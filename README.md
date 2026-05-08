@@ -50,7 +50,7 @@ The scripts generate trajectory data, reconstruction results, prediction metrics
 ## License
 
 This project is licensed under the MIT License.
-##### **# Citation**
+### Citation
 
 
 
@@ -62,7 +62,7 @@ Formal citation information will be added after the paper is published.
 
 
 
-##### **# Contact**
+### Contact
 
 
 
