@@ -1,16 +1,10 @@
-# Frame-Time Fusion: Trajectory Generation, Reconstruction, and Prediction
+# Frame-Time Fusion
 
-This repository contains the computational workflow used in the manuscript on **relaxation-mediated frame-time fusion using monolayer MoS₂ device arrays**. The code covers three tasks:
-
-1. generation of a simulated trajectory and its single-frame fused response;
-2. reconstruction and short-term prediction for the 100 × 50 simulated trajectory;
-3. reconstruction and short-term prediction for experimentally measured 8 × 8 frame-time fusion data.
+This repository provides the source code used for trajectory simulation, reconstruction, and short-term prediction in the manuscript on relaxation-mediated frame-time fusion using monolayer MoS₂ device arrays.
 
 Repository: https://github.com/olin-cn/Frame-Time-Fusion
 
----
-
-## Repository structure
+## Files
 
 ```text
 Frame-Time-Fusion/
@@ -20,86 +14,24 @@ Frame-Time-Fusion/
 └── README.md
 ```
 
-### `01_generate_simulated_trajectory.py`
+- `01_generate_simulated_trajectory.py`  
+  Generates the 100 × 50 simulated frame-time fusion response using the experimentally fitted triple-exponential relaxation model.
 
-Generates a 100 × 50 simulated frame-time fusion response matrix using the experimentally fitted triple-exponential relaxation model. The script also exports the corresponding ground-truth trajectory coordinates for quantitative evaluation.
+- `02_reconstruct_predict_100x50_simulation.py`  
+  Performs trajectory reconstruction, smoothing, Kalman-filter-based short-term prediction, and quantitative evaluation for the 100 × 50 simulated trajectory.
 
-Typical outputs:
-
-```text
-sine_trajectory_100x50.csv
-sine_trajectory_points_100x50.csv
-```
-
-### `02_reconstruct_predict_100x50_simulation.py`
-
-Performs trajectory reconstruction, smoothing, Kalman-filter-based short-term prediction, and quantitative evaluation for the 100 × 50 simulated trajectory.
-
-The reconstruction uses a monotonic-x, column-wise dynamic-programming formulation, which is appropriate for the simulated trajectory used in the manuscript.
-
-### `03_reconstruct_predict_8x8_experiment.py`
-
-Performs trajectory reconstruction and short-term prediction from experimentally measured 8 × 8 frame-time fusion response matrices.
-
-For the experimental data, the trajectory is represented as an ordered two-dimensional path
-
-\[
-\mathbf{p}_k=(x_k,y_k),
-\]
-
-rather than requiring one y value for each x-column. The x-coordinate is constrained to be non-reversing, while consecutive points with \(\Delta x=0\) are allowed. This permits near-vertical and L-shaped trajectory segments.
-
-Ground-truth trajectory coordinates are used **only for quantitative evaluation** and are not used by the reconstruction algorithm.
-
----
+- `03_reconstruct_predict_8x8_experiment.py`  
+  Performs trajectory reconstruction, smoothing, Kalman-filter-based short-term prediction, and quantitative evaluation for experimentally measured 8 × 8 frame-time fusion data.
 
 ## Requirements
 
-The scripts were developed using Python 3 and require the following packages:
+Python 3.10 or later is recommended.
 
 ```bash
 pip install numpy pandas matplotlib
 ```
 
-A recent Python 3.10+ environment is recommended.
-
----
-
-# 1. Simulated trajectory generation
-
-The simulated fused response is generated from the experimentally fitted triple-exponential relaxation function
-
-\[
-I(t)=A_1e^{-t/\tau_1}+A_2e^{-t/\tau_2}+A_3e^{-t/\tau_3}+y_0.
-\]
-
-The parameters used in the simulation are:
-
-| Parameter | Value |
-|---|---:|
-| \(A_1\) | \(3.87821\times10^{-7}\) |
-| \(\tau_1\) | 0.34921 s |
-| \(A_2\) | \(3.50008\times10^{-7}\) |
-| \(\tau_2\) | 2.97588 s |
-| \(A_3\) | \(3.00247\times10^{-7}\) |
-| \(\tau_3\) | 30.47546 s |
-| \(y_0\) | \(4.46074\times10^{-8}\) |
-| Maximum output voltage | 3.3 V |
-
-Default trajectory-generation parameters:
-
-| Parameter | Value |
-|---|---:|
-| Simulation field | 100 × 50 pixels |
-| Pixel size | 0.5 m/pixel |
-| Total travel distance | 40 m |
-| Target velocity | 1.0 m/s |
-| Sinusoidal amplitude | 10 m |
-| Sinusoidal wavelength | 8 m |
-| Conventional sampling interval | 0.1 s |
-| Added Gaussian-noise level | 5% of the maximum trajectory response |
-
-The response written at each trajectory position is propagated to a common final readout time using the triple-exponential relaxation model. Responses from all positions are then combined into one two-dimensional fused-response matrix.
+## 1. Simulated trajectory generation
 
 Run:
 
@@ -107,72 +39,11 @@ Run:
 python 01_generate_simulated_trajectory.py
 ```
 
----
+The script generates a 100 × 50 simulated fused-response matrix using the experimentally fitted triple-exponential relaxation model described in the manuscript and Supporting Information.
 
-# 2. Reconstruction and prediction for the 100 × 50 simulation
+The simulation parameters, relaxation constants, sampling settings, noise level, and random seed are explicitly defined in the script so that the simulated input can be regenerated directly.
 
-## 2.1 Input
-
-The analysis uses the simulated fused-response matrix generated by `01_generate_simulated_trajectory.py`. Ground-truth trajectory data are used only to define the evaluation target and to calculate reconstruction/prediction errors.
-
-## 2.2 Dynamic-programming reconstruction
-
-Because the simulated trajectory evolves monotonically in the x direction, it is represented as one y-coordinate for each x-column.
-
-Candidate selection parameters:
-
-| Parameter | Value |
-|---|---:|
-| Maximum candidates per column (`top_k`) | 8 |
-| Relative column threshold (`alpha`) | 0.6 |
-| Minimum valid-column response ratio | 0.05 |
-
-Dynamic-programming parameters:
-
-| Parameter | Value |
-|---|---:|
-| Response/voltage reward | 2.0 |
-| Smoothness penalty | 1.8 |
-| Missing-column penalty | 0.8 |
-| Maximum inter-column jump | 4 pixels |
-
-The parameters are fixed for the reported simulation and are not tuned point-by-point.
-
-A local response averaging step is used for robust endpoint localization in the noisy simulated response, while the original fused-response matrix is retained for the dynamic-programming reconstruction itself.
-
-## 2.3 Trajectory smoothing
-
-| Parameter | Value |
-|---|---:|
-| Smoothing window | 5 points |
-
-The smoothed trajectory is used for reporting the simulation reconstruction result shown in the manuscript.
-
-## 2.4 Kalman-filter prediction
-
-A three-state constant-acceleration model is used:
-
-\[
-\mathbf{s}_k=[y_k,v_k,a_k]^T.
-\]
-
-Parameters:
-
-| Parameter | Value |
-|---|---:|
-| Fitting window | 6 points |
-| \(\Delta t\) | 1 |
-| Process variance | 0.05 |
-| Measurement variance | 0.8 |
-| Initial covariance | Identity matrix |
-| Prediction horizon | 3 points |
-
-Initialization:
-
-- initial position: first point in the fitting window;
-- initial velocity: first-order difference of the first two points;
-- initial acceleration: second-order difference of the first three points;
-- covariance matrix: identity matrix.
+## 2. 100 × 50 simulated trajectory reconstruction and prediction
 
 Run:
 
@@ -180,87 +51,51 @@ Run:
 python 02_reconstruct_predict_100x50_simulation.py
 ```
 
----
+### Input
 
-# 3. Reconstruction and prediction for the experimental 8 × 8 data
+The input is the simulated fused-response matrix generated by `01_generate_simulated_trajectory.py`.
 
-## 3.1 Input and preprocessing
+The simulated trajectory evolves monotonically along the x direction. Therefore, reconstruction is performed using a column-wise dynamic-programming formulation with one y-coordinate for each x-column.
 
-The input is an experimentally measured 8 × 8 fused-response matrix after pixel-level calibration.
+### Dynamic-programming parameters
 
-The experimental acquisition procedure applies per-pixel calibration using the measured dark baseline and illuminated response amplitude before the trajectory-decoding step. The reconstruction script then loads the calibrated 8 × 8 matrix and normalizes the response for dynamic-programming path searching.
-
-The ground-truth trajectory is specified separately and is used **only for evaluation**. It does not participate in endpoint localization or trajectory reconstruction.
-
-## 3.2 Endpoint localization
-
-The trajectory endpoint is determined from the fused-response matrix using the strongest residual response. This is based on the relaxation-mediated temporal encoding principle: later-written positions have experienced less decay and generally retain a larger residual response.
-
-## 3.3 Ordered two-dimensional dynamic programming
-
-For the experimental 8 × 8 data, the trajectory is represented as
-
-\[
-\mathbf{p}_k=(x_k,y_k).
-\]
-
-The path-search constraints are:
-
-- x is non-reversing;
-- \(\Delta x=0\) or 1 between adjacent points;
-- \(|\Delta y|\leq 1\) pixel;
-- the residual response increases along the recovered temporal direction;
-- candidate points must satisfy the normalized-response threshold, except for the detected endpoint.
-
-The same reconstruction parameters are used for all reported 8 × 8 experimental trajectories.
-
-Dynamic-programming parameters:
+The parameters used for the reported 100 × 50 simulation are:
 
 | Parameter | Value |
 |---|---:|
-| Response reward coefficient \(\lambda\) | 1.0 |
-| Local displacement penalty \(\mu\) | 0.18 |
-| Base path penalty \(\rho_{\mathrm{base}}\) | 0.10 |
-| Weak-signal penalty coefficient \(\rho_{\mathrm{weak}}\) | 0.20 |
-| Weak-signal threshold | 0.12 |
-| Active-response threshold | 0.05 |
-| Maximum vertical displacement \(J_{\max}\) | 1 pixel |
-| Maximum positive x-step | 1 pixel |
-| Minimum response rise | \(1\times10^{-9}\) |
-| Minimum reconstructed-path length | 2 points |
+| Maximum candidates per column (`top_k`) | 8 |
+| Relative candidate threshold (`alpha`) | 0.6 |
+| Minimum valid-column response ratio | 0.05 |
+| Response reward | 2.0 |
+| Smoothness penalty | 1.8 |
+| Missing-column penalty | 0.8 |
+| Maximum inter-column displacement | 4 pixels |
 
-This formulation allows multiple consecutive path positions in the same x-column and therefore supports near-vertical and L-shaped trajectory segments. The present framework remains intended for single-target trajectories with overall directional continuity; x-direction reversal, self-intersection, repeated excitation of the same pixel, and multi-target overlap can produce reconstruction ambiguity.
+These parameters are fixed for the reported simulation.
 
-## 3.4 Smoothing
+### Kalman-filter prediction
 
-| Parameter | Value |
-|---|---:|
-| Smoothing window | 3 points |
-| Endpoint preservation | Enabled |
+A three-state constant-acceleration model is used for the reconstructed y-coordinate:
 
-The **raw dynamic-programming path** is used for quantitative reconstruction-error evaluation. The smoothed path is used as an auxiliary trajectory representation and as the input to short-term prediction.
+```text
+state = [y, v, a]
+```
 
-## 3.5 Kalman-filter prediction
-
-A constant-acceleration Kalman model is applied to the x and y coordinates of the reconstructed two-dimensional trajectory.
-
-Parameters:
+The main settings are:
 
 | Parameter | Value |
 |---|---:|
-| Fitting window | 5 points |
-| \(\Delta t\) | 1 |
+| Fitting window | 6 points |
+| Time step (`dt`) | 1 |
 | Process variance | 0.05 |
 | Measurement variance | 0.8 |
-| Initial covariance | Identity matrix |
-| Prediction horizon | 1 point for the reported 8 × 8 examples |
+| Initial covariance matrix | Identity matrix |
 
-Initialization:
+The initial velocity is estimated from the first-order difference of the first two fitting points, and the initial acceleration is estimated from the second-order difference of the first three fitting points.
 
-- initial position: first point in the fitting window;
-- initial velocity: first-order difference of the first two points;
-- initial acceleration: second-order difference of the first three points;
-- covariance matrix: identity matrix.
+Ground-truth coordinates are used only for quantitative evaluation of the simulated reconstruction and prediction results.
+
+## 3. Experimental 8 × 8 trajectory reconstruction and prediction
 
 Run:
 
@@ -268,104 +103,118 @@ Run:
 python 03_reconstruct_predict_8x8_experiment.py
 ```
 
----
+### Input and preprocessing
 
-# 4. Quantitative evaluation
+The input is an experimentally measured and pixel-calibrated 8 × 8 fused-response matrix stored as a numerical CSV file.
 
-## 4.1 Experimental 8 × 8 trajectories
+During experimental acquisition, each pixel is calibrated using its own dark baseline and illuminated response before construction of the fused-response matrix. The reconstruction program then performs the following steps:
 
-For the experimental trajectories, the point-wise spatial error is the two-dimensional Euclidean distance between the recovered/predicted point and the corresponding ground-truth point:
+1. load the calibrated 8 × 8 fused-response matrix;
+2. normalize the matrix response;
+3. determine the trajectory endpoint from the response matrix;
+4. reconstruct the ordered trajectory using two-dimensional dynamic programming;
+5. smooth the reconstructed path for auxiliary visualization and prediction;
+6. perform Kalman-filter-based short-term prediction;
+7. calculate the reconstruction and prediction errors.
 
-\[
-d_i=\|\mathbf{p}_i-\hat{\mathbf{p}}_i\|_2.
-\]
+Ground-truth trajectory coordinates are stored separately and are used only for quantitative evaluation. They are not used for endpoint localization or dynamic-programming reconstruction.
 
-The mean absolute error and root mean square error are
+### Two-dimensional dynamic-programming reconstruction
 
-\[
-\mathrm{MAE}=\frac{1}{N}\sum_{i=1}^{N}d_i,
-\]
+For the experimental 8 × 8 data, the trajectory is represented as an ordered two-dimensional path:
 
-\[
-\mathrm{RMSE}=\sqrt{\frac{1}{N}\sum_{i=1}^{N}d_i^2}.
-\]
+```text
+p_k = (x_k, y_k)
+```
 
-The normalized trajectory recovery score is
+The x-coordinate is constrained to be non-reversing, while consecutive points with `Δx = 0` are allowed. Therefore, multiple consecutive trajectory positions can occur within the same x-column, allowing near-vertical and L-shaped trajectory segments to be reconstructed.
 
-\[
-\mathrm{Score}=
-\left(1-\frac{\mathrm{RMSE}}{H_{\mathrm{ref}}}\right)\times100\%,
-\]
+The parameters used for all reported 8 × 8 experimental trajectories are:
 
-with
+| Parameter | Value |
+|---|---:|
+| Response reward coefficient (`lambda`) | 1.0 |
+| Local displacement penalty (`mu`) | 0.18 |
+| Base path penalty (`rho_base`) | 0.10 |
+| Weak-signal penalty (`rho_weak`) | 0.20 |
+| Weak-signal threshold | 0.12 |
+| Active-response threshold | 0.05 |
+| Maximum vertical displacement (`J_max`) | 1 pixel |
+| Maximum positive x-step | 1 pixel |
+| Minimum response rise | `1e-9` |
+| Minimum reconstructed-path length | 2 points |
 
-\[
-H_{\mathrm{ref}}=8
-\]
+The same parameter set is used for the three reported experimental trajectories; no trajectory-specific parameter tuning is performed.
 
-for the experimental 8 × 8 array.
+### Trajectory smoothing
 
-## 4.2 Simulated 100 × 50 trajectory
+The reconstructed dynamic-programming path is smoothed using a three-point window.
 
-For the monotonic-x simulation, reconstruction is evaluated column by column, so the point-wise error reduces to the vertical-position difference
+The raw dynamic-programming path is used for quantitative reconstruction-error evaluation. The smoothed path is used as an auxiliary trajectory representation and as the input to short-term prediction.
 
-\[
-d_i=|y_i-\hat{y}_i|.
-\]
+### Kalman-filter prediction
 
-For this simulation,
+For the experimental trajectories, a two-dimensional constant-acceleration Kalman model is used:
 
-\[
-H_{\mathrm{ref}}=50,
-\]
+```text
+state = [x, y, vx, vy, ax, ay]
+```
 
-corresponding to the vertical pixel range of the simulated field.
+The main settings are:
 
-The percentage value reported in the manuscript is therefore a **normalized trajectory recovery score**, not a classification accuracy. MAE and RMSE in pixel units are also reported to retain the absolute spatial-error information.
+| Parameter | Value |
+|---|---:|
+| Fitting window | 5 points |
+| Time step (`dt`) | 1 |
+| Process variance | 0.05 |
+| Measurement variance | 0.8 |
+| Initial covariance matrix | Identity matrix |
 
----
+The initial velocity is estimated from the first-order difference of the first two fitting points, and the initial acceleration is estimated from the second-order difference of the first three fitting points.
 
-# 5. Reported evaluation results
+For the reported 8 × 8 examples, one future trajectory point is predicted.
 
-For the three experimentally measured 8 × 8 trajectories:
+## 4. Evaluation
 
-| Dataset | Reconstruction MAE/RMSE (pixel) | Reconstruction score | Prediction MAE/RMSE (pixel) | Prediction score |
-|---|---:|---:|---:|---:|
-| Trajectory 1 | 0.2000 / 0.3295 | 95.88% | 0.0904 / 0.0904 | 98.87% |
-| Trajectory 2 | 0 / 0 | 100.00% | 0 / 0 | 100.00% |
-| Trajectory 3 | 0.5000 / 0.6124 | 92.35% | 0.3436 / 0.3436 | 95.71% |
+For the experimental 8 × 8 trajectories, the reconstruction error is evaluated using the two-dimensional Euclidean distance between corresponding reconstructed and ground-truth trajectory points.
 
-Average experimental reconstruction score: **96.08%**
+For the 100 × 50 monotonic-x simulation, the error is evaluated from the vertical-position difference at corresponding x-columns.
 
-Average experimental prediction score: **98.19%**
+The scripts report:
 
-For the 100 × 50 simulated trajectory:
+- mean absolute error (MAE);
+- root mean square error (RMSE);
+- normalized trajectory recovery score.
 
-| Task | MAE (pixel) | RMSE (pixel) | Normalized score |
-|---|---:|---:|---:|
-| Reconstruction | 2.0245 | 2.3686 | 95.26% |
-| Prediction | 2.2410 | 2.3618 | 95.28% |
+The reference span used for normalization is:
 
----
+```text
+H_ref = 8
+```
 
-# 6. Reproducibility notes
+for the experimental 8 × 8 trajectories, and
 
-- Reconstruction parameters are fixed for the reported datasets and are not individually tuned for each experimental trajectory.
-- Ground-truth coordinates are not used by the 8 × 8 reconstruction algorithm; they are used only for quantitative evaluation.
-- The 100 × 50 simulation uses a monotonic-x column-wise path representation.
-- The 8 × 8 experimental analysis uses an ordered two-dimensional path representation that allows \(\Delta x=0\).
-- Raw dynamic-programming trajectories are used for the reported experimental reconstruction metrics.
-- Random-noise generation in the simulation should use a fixed random seed when exact numerical reproduction is required.
-- The exact parameter values used for each analysis are also defined near the beginning of the corresponding Python script.
+```text
+H_ref = 50
+```
 
----
+for the 100 × 50 simulated trajectory.
 
-# 7. Suggested citation
+The percentage metric reported in the manuscript is a normalized trajectory recovery score rather than a classification accuracy.
 
-If this repository is used in connection with the manuscript, please cite the corresponding article after publication.
+## 5. Reproducibility notes
 
----
+- The reconstruction and prediction parameters listed above are fixed for the reported results.
+- Ground-truth coordinates are not used by the experimental 8 × 8 reconstruction algorithm.
+- The 100 × 50 simulation uses a monotonic-x, column-wise trajectory representation.
+- The experimental 8 × 8 analysis uses an ordered two-dimensional path and allows `Δx = 0`.
+- Numerical parameters are also defined explicitly near the beginning of the corresponding Python scripts.
+- A fixed random seed should be retained when exact reproduction of the simulated noisy response is required.
+
+## Citation
+
+If you use this repository, please cite the corresponding manuscript/article after publication.
 
 ## Contact
 
-For questions regarding the code or reproduction of the reported results, please contact the authors through the contact information provided in the manuscript.
+For questions regarding the code or reproduction of the reported results, please contact the authors using the contact information provided in the manuscript.
